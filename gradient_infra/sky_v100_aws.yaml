@@ -1,0 +1,35 @@
+# Find the full spec here:
+# https://skypilot.readthedocs.io/en/latest/reference/yaml-spec.html
+
+name: demo-eval
+
+resources:
+  cloud: aws
+  cpus: 4+
+  memory: 32+
+  accelerators: V100:1
+  disk_size: 512
+  use_spot: False
+
+
+# Note: Set the working directory to the root of the repo.
+workdir: ..
+
+setup: |
+  set -e  # Exit if any command failed.
+  # install the
+  pip install -e .
+
+run: |
+  set -e  # Exit if any command failed.
+  
+  echo "Starting eval."
+
+  python -m lm_eval \
+    --model hf \
+    --model_args pretrained=mistralai/Mistral-7B-v0.1,dtype=float16 \
+    --tasks arc_easy \
+    --batch_size 1 \
+    --device cuda:0
+
+

@@ -1,0 +1,54 @@
+# Find the full spec here:
+# https://skypilot.readthedocs.io/en/latest/reference/yaml-spec.html
+
+name: demo-aws-infernia
+
+# Note:
+# Skypilot might be stuck at INFO: `Waiting for task resources on 1 node. This will block if the cluster is full.`
+# In that case Ctrl+C, and `ssh yourinstancename`. The instance is provisioned. Dont forget to activate the venv.
+
+resources:
+  cloud: aws
+  # AWS inferentia, including neuronx
+  instance_type: inf2.8xlarge
+  # https://us-west-2.console.aws.amazon.com/ec2/home?region=us-west-2#AMICatalog:: Ubuntu Server 20.04 LTS (HVM), SSD Volume Type
+  image_id: ami-08e2c1a8d17c2fe17 # us-west-2
+  region: us-west-2
+  use_spot: True # use spot instances
+  disk_size: 512 # GB
+
+# Set the working directory to the root of the repo.
+workdir: ..
+
+setup: |
+  echo "Starting setup."
+  set -e  # Exit if any command failed.
+  # make sure that conda is not activated
+  # # skypilot needs it, and neuronx conflicts with it
+  conda deactivate
+  # install 
+  . ./gradient_infra/aws-neuron/ubuntu_neuron_216.sh
+  pip install peft evaluate jsonlines numexpr pybind11 pytablewriter rouge-score sacrebleu sqlitedict tqdm-multiprocess zstandard scikit-learn sentencepiece hf_transfer jinja2
+  pip install --no-deps -e .
+  
+  echo "Setup complete."
+
+# Note:
+# 1. you have to manually select tp_degree=24 to the number of cores `visible devices`
+# Use whatever the infernia instance has.
+# 2. recommendation: Go with batch_size=1, it compiles fastest, no OOM.
+run: |
+  echo "Starting run."
+  set -e  # Exit if any command failed.
+  # make sure that conda is not activated
+  # skypilot needs it, and neuronx conflicts with it
+  conda deactivate
+  source ~/aws_neuron_venv_pytorch/bin/activate 
+  
+  
+  python -m lm_eval --model "hf-neuron"\
+    --model_args "pretrained=mistralai/Mistral-7B-v0.1,dtype=float16,tp_degree=24" \
+    --batch_size 1 \
+    --tasks gsm8k_yaml,arc_easy
+
+  echo "End of run."

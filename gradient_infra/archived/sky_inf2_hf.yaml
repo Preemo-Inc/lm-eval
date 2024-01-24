@@ -1,0 +1,51 @@
+# Find the full spec here:
+# https://skypilot.readthedocs.io/en/latest/reference/yaml-spec.html
+
+name: demo-inf2-outdated 
+
+# NOTE: Use sky_inf_plain.yaml instead. This is outdated.
+
+resources:
+  cloud: aws
+  # AWS inferentia, including neuronx
+  instance_type: inf2.48xlarge
+  # Find the right AMI image:
+  # https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#Images:visibility=public-images;search=:huggingface-neuron;v=3;$case=tags:false%5C,client:false;$regex=tags:false%5C,client:false
+  image_id: ami-04dd1be93bedbc674 # us-west-2
+  # image_id: ami-02f0c62ebb2ef458d # us-east-1
+  region: us-west-2
+  use_spot: True # use spot instances
+  disk_size: 512 # GB
+
+# Note: Set the working directory to the root of the repo.
+workdir: ..
+
+setup: |
+  echo "Starting setup."
+  echo "Starting setup."
+  set -e  # Exit if any command failed.
+  # make sure that conda is not activated
+  # skypilot needs it, and neuronx conflicts with it
+  conda deactivate
+  # Disk is already mounted at huggingface's ami
+  pip install peft evaluate jsonlines numexpr pybind11 pytablewriter rouge-score sacrebleu sqlitedict tqdm-multiprocess zstandard
+  pip install --no-deps -e .
+  pip config set global.extra-index-url https://pip.repos.neuron.amazonaws.com
+  # pip install wget 
+  # pip install awscli 
+  # pip install --upgrade neuronx-cc==2.* torch-neuronx==1.* torchvision transformers-neuronx==0.9.*
+  echo "Setup complete."
+
+run: |
+  echo "Starting run."
+  set -e  # Exit if any command failed.
+  # make sure that conda is not activated
+  # skypilot needs it, and neuronx conflicts with it
+  conda deactivate
+ 
+  python -m lm_eval --model "optimum-neuron"\
+    --model_args "pretrained=mistralai/Mistral-7B-v0.1,dtype=float16" \
+    --batch_size 1 \
+    --tasks arc_easy,code2text_python
+
+  echo "End of run."

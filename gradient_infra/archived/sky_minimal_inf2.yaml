@@ -1,0 +1,56 @@
+# Find the full spec here:
+# https://skypilot.readthedocs.io/en/latest/reference/yaml-spec.html
+
+name: demo-inf2-outdated 
+
+# NOTE: Use sky_inf_plain.yaml instead. This is outdated.
+
+resources:
+  cloud: aws
+  # AWS inferentia, including neuronx
+  # https://github.com/skypilot-org/skypilot/issues/2686#issuecomment-1754067953
+  instance_type: inf2.8xlarge
+  # always get a image:
+  # Option 1: get pytorch image
+  #      aws ec2 describe-images --region us-west-2 --owners amazon --filters 'Name=name,Values=Deep Learning AMI Neuron PyTorch *' 'Name=state,Values=available' --query 'reverse(sort_by(Images, &CreationDate))'
+  # Option 2: get neuronx image
+  #      aws ec2 describe-images --region us-west-2 --owners amazon --filters 'Name=name,Values=Deep Learning Base Neuron AMI *' 'Name=state,Values=available' --query 'reverse(sort_by(Images, &CreationDate))'
+
+  image_id: ami-0a1063844e84bee6a
+  # region: us-east-1 # ami-0c43538b49cfc5642 is the image for east-1
+  region: us-west-2 # ami-0a1063844e84bee6a is the ` amazon/Deep Learning AMI Neuron PyTorch 1.13 (Amazon Linux 2) 20240102` for west-2
+  use_spot: False
+  disk_size: 1024
+
+# Note: Set the working directory to the root of the repo.
+workdir: ..
+
+setup: |
+  echo "Starting setup."
+  set -e  # Exit if any command failed.
+  # make sure that conda is not activated
+  # skypilot needs it, and neuronx conflicts with it
+  # conda deactivate
+
+
+  . ./gradient_infra/aws-neuron/neuron_attach_disk.sh
+  . ./gradient_infra/aws-neuron/neuron_215_torch20_pip.sh
+  # install eval harness without torch
+  pip install peft evaluate jsonlines numexpr pybind11 pytablewriter rouge-score sacrebleu sqlitedict tqdm-multiprocess  zstandard
+  pip install --no-deps -e .
+  echo "Setup complete."
+
+run: |
+  echo "Starting run."
+  set -e  # Exit if any command failed.
+  # make sure that conda is not activated
+  # skypilot needs it, and neuronx conflicts with it
+  # conda deactivate
+  source /opt/aws_neuron_venv_pytorch/bin/activate
+  echo "Starting demo."
+  python -m lm_eval --model "hf-neuron"\
+    --model_args "pretrained=mistralai/Mistral-7B-v0.1,dtype=float16,dtype=bfloat16,tp_degree=2" \
+    --batch_size 16 \
+    --tasks arc_easy,code2text_python
+
+  echo "End of run."
