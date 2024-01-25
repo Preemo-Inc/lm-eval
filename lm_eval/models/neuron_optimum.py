@@ -14,6 +14,7 @@ from transformers.generation import StoppingCriteriaList
 from lm_eval import utils
 from lm_eval.api.model import LM
 from lm_eval.api.registry import register_model
+from lm_eval.models.neuron_utils import shared_utils
 from lm_eval.utils import stop_sequences_criteria
 
 
@@ -25,8 +26,6 @@ try:
 except ImportError:
     NeuronModelForCausalLM = object
     NEURON_AVAILABLE = False
-
-from lm_eval.models.neuron_utils import shared_utils
 
 
 logger = logging.getLogger(__name__)
@@ -152,7 +151,7 @@ class NEURON_HF(LM):
         if not NEURON_AVAILABLE:
             raise Exception(
                 "Tried to load neuron model, but neuron is not installed ",
-                "please install neuron via pip install transformers-neuron",
+                "please install neuron via pip install transformers-neuron ",
                 "also make sure you are running on an AWS inf2 instance",
             )
         if version.parse(optimum_neuron_version) <= version.parse("0.0.17"):

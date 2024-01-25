@@ -16,6 +16,7 @@ from transformers import LlamaForCausalLM, MistralForCausalLM, OPTForCausalLM
 from lm_eval import utils
 from lm_eval.api.model import LM
 from lm_eval.api.registry import register_model
+from lm_eval.models.neuron_utils import shared_utils
 from lm_eval.utils import stop_sequences_criteria
 
 
@@ -26,8 +27,6 @@ try:
     from transformers_neuronx.mistral.model import MistralForSampling
     from transformers_neuronx.module import save_pretrained_split
     from transformers_neuronx.opt.model import OPTForSampling
-
-    from .neuron_utils import shared_utils
 
     @dataclass
     class ModelRegistry:
