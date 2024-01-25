@@ -1,7 +1,7 @@
 # Find the full spec here:
 # https://skypilot.readthedocs.io/en/latest/reference/yaml-spec.html
 
-name: demo-inf2-outdated 
+name: demo-inf2-outdated
 
 # NOTE: Use sky_inf_plain.yaml instead. This is outdated.
 
@@ -31,8 +31,8 @@ setup: |
   pip install peft evaluate jsonlines numexpr pybind11 pytablewriter rouge-score sacrebleu sqlitedict tqdm-multiprocess zstandard
   pip install --no-deps -e .
   pip config set global.extra-index-url https://pip.repos.neuron.amazonaws.com
-  # pip install wget 
-  # pip install awscli 
+  # pip install wget
+  # pip install awscli
   # pip install --upgrade neuronx-cc==2.* torch-neuronx==1.* torchvision transformers-neuronx==0.9.*
   echo "Setup complete."
 
@@ -42,10 +42,10 @@ run: |
   # make sure that conda is not activated
   # skypilot needs it, and neuronx conflicts with it
   conda deactivate
- 
+
   python -m lm_eval --model "optimum-neuron"\
     --model_args "pretrained=mistralai/Mistral-7B-v0.1,dtype=float16" \
     --batch_size 1 \
-    --tasks arc_easy,code2text_python
+    --tasks arc_easy,gsm8k
 
   echo "End of run."

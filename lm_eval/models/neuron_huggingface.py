@@ -1,56 +1,33 @@
+import copy
+import enum
 import os
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, List, Optional, Type, Union
 
 import torch
-import transformers
-
-from transformers import LlamaForCausalLM
-from transformers import OPTForCausalLM
-from transformers import MistralForCausalLM
-import copy
-from collections import defaultdict
-from tqdm import tqdm
-from pathlib import Path
-
 import torch.nn.functional as F
+import transformers
+from huggingface_hub.constants import HF_HUB_CACHE
+from tqdm import tqdm
+from transformers import LlamaForCausalLM, MistralForCausalLM, OPTForCausalLM
 
 from lm_eval import utils
 from lm_eval.api.model import LM
 from lm_eval.api.registry import register_model
+from lm_eval.utils import stop_sequences_criteria
 
-from lm_eval.utils import MultiTokenEOSCriteria, stop_sequences_criteria
-
-from typing import List, Optional, Union
-from huggingface_hub.constants import HF_HUB_CACHE
-import enum
-from dataclasses import dataclass
-from typing import Type, Callable
 
 NEURON_AVAILABLE = True
 try:
-    from .neuron_utils import shared_utils
+    from transformers_neuronx import sampling
     from transformers_neuronx.llama.model import LlamaForSampling
-    from transformers_neuronx.opt.model import OPTForSampling
     from transformers_neuronx.mistral.model import MistralForSampling
     from transformers_neuronx.module import save_pretrained_split
-    from transformers_neuronx import sampling
-    from transformers_neuronx.stopping_criteria import StoppingCriteriaList
+    from transformers_neuronx.opt.model import OPTForSampling
 
-    # def stop_sequences_criteria(
-    #     tokenizer: transformers.PreTrainedTokenizer,
-    #     stop_sequences: List[str],
-    #     initial_decoder_input_length: int,
-    #     batch_size: int,
-    # ) -> StoppingCriteriaList:
-    #     return StoppingCriteriaList(
-    #         [
-    #             *[
-    #                 MultiTokenEOSCriteria(
-    #                     sequence, tokenizer, initial_decoder_input_length, batch_size
-    #                 )
-    #                 for sequence in stop_sequences
-    #             ],
-    #         ]
-    #     )
+    from .neuron_utils import shared_utils
 
     @dataclass
     class ModelRegistry:
@@ -71,7 +48,8 @@ try:
             model_class_hf=OPTForCausalLM, model_class_neuron=OPTForSampling
         )
         MistralForCausalLM = ModelRegistry(
-            model_class_hf=MistralForCausalLM, model_class_neuron=MistralForSampling, 
+            model_class_hf=MistralForCausalLM,
+            model_class_neuron=MistralForSampling,
         )
 
 except ImportError:
@@ -185,6 +163,8 @@ class NEURON_HF(LM):
             self.amp_dtype = "f16"
         elif torch_dtype == torch.bfloat16:
             self.amp_dtype = "bf16"
+        elif torch_dtype == torch.float32:
+            self.amp_dtype = "fp32"
         else:
             raise NotImplementedError("Only float16 and bfloat16 are implemented.")
         path_neuron = (
@@ -195,7 +175,7 @@ class NEURON_HF(LM):
         path_neuron.mkdir(parents=True, exist_ok=True)
         print(f"Splitting neuron model to {path_neuron}")
         save_pretrained_split(torch_model, path_neuron)
-        self.neuron_model = LlamaForSampling.from_pretrained(
+        self.neuron_model = self.NEURON_MODEL_CLASS.from_pretrained(
             path_neuron, batch_size=batch_size, tp_degree=tp_degree, amp=self.amp_dtype
         )
         print(
@@ -312,7 +292,6 @@ class NEURON_HF(LM):
     def tok_decode(self, tokens):
         return self.tokenizer.decode(tokens)
 
-
     def _model_call_v2(self, input_ids):
         batch_size, sequence_length = input_ids.shape
         missing_batch_size: int = self.batch_size - batch_size
@@ -370,7 +349,6 @@ class NEURON_HF(LM):
                 ],
                 dim=1,
             )
-
 
     def _model_generate(
         self, context, attention_mask, max_length, stop, **generation_kwargs
@@ -435,8 +413,9 @@ class NEURON_HF(LM):
         for context, continuation in [req.args for req in requests]:
             if context == "":
                 # end of text as context
-                context_enc, continuation_enc = [self.eot_token_id], self.tok_encode(
-                    continuation
+                context_enc, continuation_enc = (
+                    [self.eot_token_id],
+                    self.tok_encode(continuation),
                 )
             else:
                 context_enc, continuation_enc = self._encode_pair(context, continuation)
@@ -600,9 +579,7 @@ class NEURON_HF(LM):
                 greedy_tokens = logits.argmax(dim=-1)
                 cont_toks = torch.tensor(
                     cont_toks, dtype=torch.long, device=self.device
-                ).unsqueeze(
-                    0
-                )  # [1, seq]
+                ).unsqueeze(0)  # [1, seq]
                 max_equal = (greedy_tokens == cont_toks).all()
 
                 # Obtain log-probs at the corresponding continuation token indices

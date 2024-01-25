@@ -1,56 +1,133 @@
-import os
+import copy
+import logging
+from collections import defaultdict
+from typing import List, Optional, Union
 
 import torch
-import transformers
-
-from transformers import LlamaForCausalLM
-from transformers import OPTForCausalLM
-import copy
-from collections import defaultdict
-from tqdm import tqdm
-from pathlib import Path
-
 import torch.nn.functional as F
+import transformers
+from packaging import version
+from tqdm import tqdm
+from transformers import GenerationConfig
+from transformers.generation import StoppingCriteriaList
 
 from lm_eval import utils
-
 from lm_eval.api.model import LM
 from lm_eval.api.registry import register_model
+from lm_eval.utils import stop_sequences_criteria
 
-from lm_eval.utils import MultiTokenEOSCriteria, stop_sequences_criteria
 
-from typing import List, Optional, Union
-from huggingface_hub.constants import HF_HUB_CACHE
-import subprocess
-import json
-
-NEURON_AVAILABLE = True
-CustomNeuronModelForCausalLM = object()
 try:
-    from .neuron_utils.custom_causal import CustomNeuronModelForCausalLM
+    NEURON_AVAILABLE = True
+    from optimum.neuron import NeuronModelForCausalLM
+    from optimum.neuron import __version__ as optimum_neuron_version
+    from optimum.neuron.generation import TokenSelector
 except ImportError:
+    NeuronModelForCausalLM = object
     NEURON_AVAILABLE = False
 
+from lm_eval.models.neuron_utils import shared_utils
 
-def get_nc_count() -> int:
-    """Returns the number of neuron cores on the current instance."""
-    try:
-        cmd = "neuron-ls --json-output"
-        result = subprocess.run(cmd, shell=True, capture_output=True)
-        print(f"inferring nc_count from `neuron-ls` {result.stdout}")
-        json_output = json.loads(result.stdout)
-        count = sum([x["nc_count"] for x in json_output])
-        print(f"nc_count={count}")
-        return count
-    except Exception:
-        return None
+
+logger = logging.getLogger(__name__)
+
+
+class CustomNeuronModelForCausalLM(NeuronModelForCausalLM):
+    """NeuronModelForCausalLM with `stopping_criteria` in `generate`"""
+
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        stopping_criteria: Optional["StoppingCriteriaList"] = None,
+        generation_config: Optional["GenerationConfig"] = None,
+        **kwargs,
+    ) -> torch.LongTensor:
+        r"""
+        A streamlined generate() method overriding the transformers.GenerationMixin.generate() method.
+
+        This method uses the same logits processors/warpers and stopping criteria as the transformers library
+        `generate()` method but restricts the generation to greedy search and sampling.
+
+        It does not support transformers `generate()` advanced options.
+
+        Please refer to https://huggingface.co/docs/transformers/en/main_classes/text_generation#transformers.GenerationMixin.generate
+        for details on generation configuration.
+
+        Parameters:
+            input_ids (`torch.Tensor` of shape `(batch_size, sequence_length)`):
+                The sequence used as a prompt for the generation.
+            attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+                Mask to avoid performing attention on padding token indices.
+            generation_config (`~transformers.generation.GenerationConfig`, *optional*):
+                The generation configuration to be used as base parametrization for the generation call. `**kwargs`
+                passed to generate matching the attributes of `generation_config` will override them. If
+                `generation_config` is not provided, default will be used, which had the following loading
+                priority: 1) from the `generation_config.json` model file, if it exists; 2) from the model
+                configuration. Please note that unspecified parameters will inherit [`~transformers.generation.GenerationConfig`]'s
+                default values, whose documentation should be checked to parameterize generation.
+
+        Returns:
+            `torch.Tensor`: A  `torch.FloatTensor`.
+        """
+        # The actual generation configuration is a combination of config and parameters
+        generation_config = copy.deepcopy(
+            self.generation_config if generation_config is None else generation_config
+        )
+        model_kwargs = generation_config.update(
+            **kwargs
+        )  # All unused kwargs must be model kwargs
+        # Check model kwargs are actually used by either prepare_inputs_for_generation or forward
+        self._validate_model_kwargs(model_kwargs)
+
+        # Instantiate a TokenSelector for the specified configuration
+        selector = TokenSelector.create(
+            input_ids, generation_config, self, self.max_length
+        )
+        selector.stopping_criteria.append(stopping_criteria)
+        # Verify that the inputs are compatible with the model static input dimensions
+        batch_size, sequence_length = input_ids.shape
+        if sequence_length > self.max_length:
+            raise ValueError(
+                f"The input sequence length ({sequence_length}) exceeds the model static sequence length ({self.max_length})"
+            )
+        padded_input_ids = input_ids
+        padded_attention_mask = attention_mask
+        if batch_size > self.batch_size:
+            raise ValueError(
+                f"The specified batch_size ({batch_size}) exceeds the model static batch size ({self.batch_size})"
+            )
+        elif batch_size < self.batch_size:
+            logger.warning(
+                "Inputs will be padded to match the model static batch size. This will increase latency."
+            )
+            padding_shape = [self.batch_size - batch_size, sequence_length]
+            padding = torch.full(
+                padding_shape, fill_value=self.config.eos_token_id, dtype=torch.int64
+            )
+            padded_input_ids = torch.cat([input_ids, padding])
+            if attention_mask is not None:
+                padding = torch.zeros(padding_shape, dtype=torch.int64)
+                padded_attention_mask = torch.cat([attention_mask, padding])
+        # Drop the current generation context and clear the Key/Value cache
+        self.reset_generation()
+
+        output_ids = self.generate_tokens(
+            padded_input_ids,
+            selector,
+            batch_size,
+            attention_mask=padded_attention_mask,
+            **model_kwargs,
+        )
+        return output_ids[:batch_size, :]
+
 
 @register_model("optimum-neuron")
 class NEURON_HF(LM):
     """
-    Enables usage with LLama and Opt on AWS Neuron
+    Enables usage with on AWS Neuron
     using the HuggingFace Transformers + Transformers neuronx library.
-    Tested with neuron 2.15.9
+    Tested with neuron 2.17.0
     """
 
     _DEFAULT_MAX_LENGTH = 2048
@@ -69,7 +146,6 @@ class NEURON_HF(LM):
         low_cpu_mem_usage: Optional[bool] = True,
         trust_remote_code: Optional[bool] = False,
         use_fast_tokenizer: Optional[bool] = True,
-        cache_dir: Optional[Union[str, os.PathLike]] = HF_HUB_CACHE,
         # arguments used for splitting a model across GPUs naively.
         # only used if `parallelize=True`.
     ) -> None:
@@ -78,6 +154,12 @@ class NEURON_HF(LM):
                 "Tried to load neuron model, but neuron is not installed ",
                 "please install neuron via pip install transformers-neuron",
                 "also make sure you are running on an AWS inf2 instance",
+            )
+        if version(optimum_neuron_version) <= version("0.0.17"):
+            logger.warning(
+                '`optimum-neuron` model requires `pip install "optimum[neuronx]>=0.0.17"'
+                "preferably using the Hugging Face Neuron Deep Learning AMI (Ubuntu 22.04)"
+                "https://aws.amazon.com/marketplace/pp/prodview-gr3e6yiscria2 "
             )
         super().__init__()
 
@@ -89,11 +171,11 @@ class NEURON_HF(LM):
         if tp_degree is None:
             # execute `neuron-ls --json-output | jq '.[0].nc_count'``
             # to get the number of neuron cores on your instance
-            tp_degree = get_nc_count()
+            tp_degree = shared_utils.get_nc_count()
 
         assert isinstance(tp_degree, int), (
             f"model_args must include tp_degree. tp_degree must be set to an integer,"
-            f" but is tp_degree=`{tp_degree}` type {type(tp_degree)}."
+            f" but is tp_degree=`{tp_degree}` with type=`{type(tp_degree)}`."
             "Set it to number of neuron cores on your instance."
             " For inf2.xlarge and inf2.8xlarge, set it to `2`."
             " For inf2.24xlarge, set it to `12`."
@@ -127,6 +209,8 @@ class NEURON_HF(LM):
             self.amp_dtype = "f16"
         elif torch_dtype == torch.bfloat16:
             self.amp_dtype = "bf16"
+        elif torch_dtype == torch.float32:
+            self.amp_dtype = "f32"
         else:
             raise NotImplementedError("Only float16 and bfloat16 are implemented.")
 
@@ -251,17 +335,17 @@ class NEURON_HF(LM):
     def tok_decode(self, tokens):
         return self.tokenizer.decode(tokens)
 
-    # @wrap_constant_batch_size
-    def _model_call_old(self, input_ids):
+    @shared_utils.wrap_constant_batch_size
+    def _model_call(self, input_ids: torch.Tensor):
         """
         get logits for the entire sequence
 
-        :param inps: torch.Tensor
+        :param input_ids: torch.Tensor
             A torch tensor of shape [batch, sequence_cont]
             the size of sequence may vary from call to call
         :return
             A torch tensor of shape [batch, sequence, vocab] with the
-        logits returned from the model's decoder
+            logits returned from the model's decoder-lm head
         """
         _, sequence_length = input_ids.shape
 
@@ -279,27 +363,14 @@ class NEURON_HF(LM):
                 dim=1,
             )
 
-    def _model_call(self, input_ids):
-        """
-        get logits for the entire sequence
-
-        :param inps: torch.Tensor
-            A torch tensor of shape [batch, sequence_cont]
-            the size of sequence may vary from call to call
-        :return
-            A torch tensor of shape [batch, sequence, vocab] with the
-        logits returned from the model's decoder
-        """
-        with torch.inference_mode():
-            return self.model.forward_full_sequence(input_ids)
-
     def _model_generate(self, context, max_length, stop, **generation_kwargs):
         # we require users to pass do_sample=True explicitly
         # for non-greedy gen. This should be reevaluated when considering beam search.
+
         with torch.inference_mode():
             if "do_sample" not in generation_kwargs.keys():
                 generation_kwargs["do_sample"] = False
-            # build stopping criteria
+
             stopping_criteria = stop_sequences_criteria(
                 self.tokenizer,
                 stop + [self.tokenizer.decode([self.config.eos_token_id])],
@@ -346,8 +417,9 @@ class NEURON_HF(LM):
         for context, continuation in [req.args for req in requests]:
             if context == "":
                 # end of text as context
-                context_enc, continuation_enc = [self.eot_token_id], self.tok_encode(
-                    continuation
+                context_enc, continuation_enc = (
+                    [self.eot_token_id],
+                    self.tok_encode(continuation),
                 )
             else:
                 context_enc, continuation_enc = self._encode_pair(context, continuation)
@@ -511,9 +583,7 @@ class NEURON_HF(LM):
                 greedy_tokens = logits.argmax(dim=-1)
                 cont_toks = torch.tensor(
                     cont_toks, dtype=torch.long, device=self.device
-                ).unsqueeze(
-                    0
-                )  # [1, seq]
+                ).unsqueeze(0)  # [1, seq]
                 max_equal = (greedy_tokens == cont_toks).all()
 
                 # Obtain log-probs at the corresponding continuation token indices

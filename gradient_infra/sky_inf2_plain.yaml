@@ -26,11 +26,11 @@ setup: |
   # make sure that conda is not activated
   # # skypilot needs it, and neuronx conflicts with it
   conda deactivate
-  # install 
+  # install
   . ./gradient_infra/aws-neuron/ubuntu_neuron_216.sh
   pip install peft evaluate jsonlines numexpr pybind11 pytablewriter rouge-score sacrebleu sqlitedict tqdm-multiprocess zstandard scikit-learn sentencepiece hf_transfer jinja2
   pip install --no-deps -e .
-  
+
   echo "Setup complete."
 
 # Note:
@@ -43,12 +43,12 @@ run: |
   # make sure that conda is not activated
   # skypilot needs it, and neuronx conflicts with it
   conda deactivate
-  source ~/aws_neuron_venv_pytorch/bin/activate 
-  
-  
+  source ~/aws_neuron_venv_pytorch/bin/activate
+
+
   python -m lm_eval --model "hf-neuron"\
     --model_args "pretrained=mistralai/Mistral-7B-v0.1,dtype=float16,tp_degree=24" \
     --batch_size 1 \
-    --tasks gsm8k_yaml,arc_easy
+    --tasks arc_easy,gsm8k
 
   echo "End of run."

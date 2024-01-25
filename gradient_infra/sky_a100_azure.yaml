@@ -1,16 +1,19 @@
 # Find the full spec here:
 # https://skypilot.readthedocs.io/en/latest/reference/yaml-spec.html
 
+# AZURE: Our subscriptions has A100 and region eastus
+# Please name your clusters with "sky-yourname" prefix, they are occationally creating resource groups
+
 name: demo-eval
 
 resources:
-  cloud: aws
+  cloud: azure
   cpus: 4+
   memory: 32+
-  accelerators: A100-80GB:8
+  region: eastus
+  accelerators: A100-80GB:1
   disk_size: 512
   use_spot: False
-
 
 # Note: Set the working directory to the root of the repo.
 workdir: ..
@@ -20,14 +23,18 @@ setup: |
   # install the
   pip install -e .
 
+  # TODO:
+  # skypilot 4.1.0 - an old azure image with cuda11.5
+  # torch 1.11.0 seems to be the last version that works with cuda 11.5
+  pip install torch==1.11.0 --index-url https://download.pytorch.org/whl/cu115
+
 run: |
   set -e  # Exit if any command failed.
-
   echo "Starting eval."
 
   python -m lm_eval \
     --model hf \
     --model_args pretrained=mistralai/Mistral-7B-v0.1,dtype=float16 \
-    --tasks arc_easy,gsm8k \
+    --tasks arc_easy \
     --batch_size 1 \
     --device cuda:0

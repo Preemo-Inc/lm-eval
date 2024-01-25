@@ -1,13 +1,20 @@
-import subprocess
 import json
+import subprocess
+from typing import Union
+
 import torch
 
+
 try:
-    from transformers_neuronx.sampling import top_k_top_p_filtering, validate_top_k_top_p_min_tokens_to_keep
+    from transformers_neuronx.sampling import (
+        top_k_top_p_filtering,
+        validate_top_k_top_p_min_tokens_to_keep,
+    )
 except ImportError:
     pass
 
-def get_nc_count() -> int:
+
+def get_nc_count() -> Union[int, None]:
     """Returns the number of neuron cores on the current instance."""
     try:
         cmd = "neuron-ls --json-output"
@@ -19,6 +26,7 @@ def get_nc_count() -> int:
         return count
     except Exception:
         return None
+
 
 def wrap_constant_batch_size(func):
     def _decorator(self, input_ids):
@@ -53,43 +61,28 @@ def wrap_constant_batch_size(func):
 
     return _decorator
 
-if __name__ == "__main__":
-    class Tester():
-        def __init__(self, batch_size):
-            self.batch_size = batch_size
-        
-        @wrap_constant_batch_size
-        def test_constant_batch_size(self, inputs):
-            assert len(inputs) == self.batch_size
-            return inputs
 
-
-    batch_size_test = 8
-    for i in range(1, batch_size_test + 1):
-        tensor = torch.ones([i, 2, 2])
-        out = Tester(batch_size=batch_size_test).test_constant_batch_size(tensor)
-        torch.testing.assert_allclose(out, tensor)
-   
-    try:
-        Tester(batch_size=batch_size_test).test_constant_batch_size(torch.ones([batch_size_test + 1, 2, 2]))
-        raise AssertionError("should have raised ValueError")
-    except ValueError:
-        print("all tests passed")
-        
-    print("neuron core count:", get_nc_count())
-    
-
-
-def sample_loop_llama(model, input_ids, start_ids, next_token_scores, sequence_length, eos_token_id=2,
-                      top_k=50, top_p=1.0, temperature=1.0, streamer=None, stopping_criteria_list=None):
+def sample_loop_llama(
+    model,
+    input_ids,
+    start_ids,
+    next_token_scores,
+    sequence_length,
+    eos_token_id=2,
+    top_k=50,
+    top_p=1.0,
+    temperature=1.0,
+    streamer=None,
+    stopping_criteria_list=None,
+):
     validate_top_k_top_p_min_tokens_to_keep(top_k, top_p, None)
 
     if not isinstance(temperature, float) or not (temperature > 0):
-        raise ValueError('temperature has to be a strictly positive float.')
+        raise ValueError("temperature has to be a strictly positive float.")
 
     # stopping_criteria_list = stopping_criteria_list if stopping_criteria_list is not None else StoppingCriteriaList()
 
-# Flags, one per sequence in a batch, to indicate if a sequence hit eos_token_id
+    # Flags, one per sequence in a batch, to indicate if a sequence hit eos_token_id
     done_flags = torch.full((input_ids.size(dim=0), 1), False)
     tokens = [input_ids]
     _, start = input_ids.shape
@@ -100,7 +93,9 @@ def sample_loop_llama(model, input_ids, start_ids, next_token_scores, sequence_l
         if temperature != 1.0:
             next_token_scores /= temperature
 
-        top_values, top_indices = top_k_top_p_filtering(next_token_scores, top_k=top_k, top_p=top_p)
+        top_values, top_indices = top_k_top_p_filtering(
+            next_token_scores, top_k=top_k, top_p=top_p
+        )
 
         # sample
         probs = torch.nn.functional.softmax(top_values, dim=-1, dtype=torch.float32)
@@ -117,15 +112,21 @@ def sample_loop_llama(model, input_ids, start_ids, next_token_scores, sequence_l
         token = torch.where(done_flags.eq(True), eos_token_id, inputs)
         tokens.append(token)
 
-        if streamer is not None and hasattr(streamer, 'response_with_prefix') and streamer.response_with_prefix:
-             streamer.put(torch.cat(tokens, dim=-1))
+        if (
+            streamer is not None
+            and hasattr(streamer, "response_with_prefix")
+            and streamer.response_with_prefix
+        ):
+            streamer.put(torch.cat(tokens, dim=-1))
         elif streamer:
             streamer.put(token)
 
         if next_len >= sequence_length or done_flags.all():
             break
 
-        if stopping_criteria_list is not None and stopping_criteria_list(torch.cat(tokens[-64:], dim=-1), probs):
+        if stopping_criteria_list is not None and stopping_criteria_list(
+            torch.cat(tokens[-64:], dim=-1), probs
+        ):
             break
 
         # forward pass to get next token
@@ -136,3 +137,31 @@ def sample_loop_llama(model, input_ids, start_ids, next_token_scores, sequence_l
         streamer.end()
 
     return torch.cat(tokens, dim=-1)
+
+
+if __name__ == "__main__":
+
+    class Tester:
+        def __init__(self, batch_size):
+            self.batch_size = batch_size
+
+        @wrap_constant_batch_size
+        def test_constant_batch_size(self, inputs):
+            assert len(inputs) == self.batch_size
+            return inputs
+
+    batch_size_test = 8
+    for i in range(1, batch_size_test + 1):
+        tensor = torch.ones([i, 2, 2])
+        out = Tester(batch_size=batch_size_test).test_constant_batch_size(tensor)
+        torch.testing.assert_allclose(out, tensor)
+
+    try:
+        Tester(batch_size=batch_size_test).test_constant_batch_size(
+            torch.ones([batch_size_test + 1, 2, 2])
+        )
+        raise AssertionError("should have raised ValueError")
+    except ValueError:
+        print("all tests passed")
+
+    print("neuron core count:", get_nc_count())

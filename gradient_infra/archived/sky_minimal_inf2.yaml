@@ -1,7 +1,7 @@
 # Find the full spec here:
 # https://skypilot.readthedocs.io/en/latest/reference/yaml-spec.html
 
-name: demo-inf2-outdated 
+name: demo-inf2-outdated
 
 # NOTE: Use sky_inf_plain.yaml instead. This is outdated.
 
@@ -51,6 +51,6 @@ run: |
   python -m lm_eval --model "hf-neuron"\
     --model_args "pretrained=mistralai/Mistral-7B-v0.1,dtype=float16,dtype=bfloat16,tp_degree=2" \
     --batch_size 16 \
-    --tasks arc_easy,code2text_python
+    --tasks arc_easy,gsm8k
 
   echo "End of run."
