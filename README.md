@@ -1,3 +1,26 @@
+# Instructions:
+
+We added ./gradient_infra to launch skypilot jobs
+We added under lm_eval a class for `transformers_neuronx` and a class for huggingfaces ``
+
+optimum-neuron (pretrained=TinyLlama/TinyLlama-1.1B-Chat-v1.0,dtype=float16), gen_kwargs: (None), limit: None, num_fewshot: None, batch_size: 1
+|    Tasks     |Version|  Filter  |n-shot|  Metric   |Value |   |Stderr|
+|--------------|------:|----------|-----:|-----------|-----:|---|-----:|
+|arc_easy      |      1|none      |     0|acc        |0.6128|±  |0.0100|
+|              |       |none      |     0|acc_norm   |0.5429|±  |0.0102|
+|gsm8k         |      2|get-answer|     5|exact_match|0.0197|±  |0.0038|
+|truthfulqa_mc2|      2|none      |     0|acc        |0.3787|±  |0.0140|
+
+
+(demo-eval, pid=36371) hf (pretrained=TinyLlama/TinyLlama-1.1B-Chat-v1.0,dtype=float16), gen_kwargs: (None), limit: None, num_fewshot: None, batch_size: 1
+(demo-eval, pid=36371) |    Tasks     |Version|  Filter  |n-shot|  Metric   |Value |   |Stderr|
+(demo-eval, pid=36371) |--------------|------:|----------|-----:|-----------|-----:|---|-----:|
+(demo-eval, pid=36371) |arc_easy      |      1|none      |     0|acc        |0.6124|±  |0.0100|
+(demo-eval, pid=36371) |              |       |none      |     0|acc_norm   |0.5438|±  |0.0102|
+(demo-eval, pid=36371) |gsm8k         |      2|get-answer|     5|exact_match|0.0205|±  |0.0039|
+(demo-eval, pid=36371) |truthfulqa_mc2|      2|none      |     0|acc        |0.3789|±  |0.0140|
+(demo-eval, pid=36371)
+
 # Language Model Evaluation Harness
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10256836.svg)](https://doi.org/10.5281/zenodo.10256836)
