@@ -20,8 +20,8 @@ from lm_eval.utils import stop_sequences_criteria
 try:
     NEURON_AVAILABLE = True
     from optimum.neuron import NeuronModelForCausalLM
-    from optimum.neuron import __version__ as optimum_neuron_version
     from optimum.neuron.generation import TokenSelector
+    from optimum.neuron.version import __version__ as optimum_neuron_version
 except ImportError:
     NeuronModelForCausalLM = object
     NEURON_AVAILABLE = False
@@ -155,7 +155,7 @@ class NEURON_HF(LM):
                 "please install neuron via pip install transformers-neuron",
                 "also make sure you are running on an AWS inf2 instance",
             )
-        if version(optimum_neuron_version) <= version("0.0.17"):
+        if version.parse(optimum_neuron_version) <= version.parse("0.0.17"):
             logger.warning(
                 '`optimum-neuron` model requires `pip install "optimum[neuronx]>=0.0.17"'
                 "preferably using the Hugging Face Neuron Deep Learning AMI (Ubuntu 22.04)"

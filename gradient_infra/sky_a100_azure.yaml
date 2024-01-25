@@ -35,6 +35,6 @@ run: |
   python -m lm_eval \
     --model hf \
     --model_args pretrained=mistralai/Mistral-7B-v0.1,dtype=float16 \
-    --tasks arc_easy \
+    --tasks arc_easy,truthfulqa_gen \
     --batch_size 1 \
     --device cuda:0

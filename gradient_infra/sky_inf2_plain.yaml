@@ -49,6 +49,6 @@ run: |
   python -m lm_eval --model "hf-neuron"\
     --model_args "pretrained=mistralai/Mistral-7B-v0.1,dtype=float16,tp_degree=24" \
     --batch_size 1 \
-    --tasks arc_easy,gsm8k
+    --tasks arc_easy,truthfulqa_mc2,gsm8k
 
   echo "End of run."
